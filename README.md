@@ -1,5 +1,7 @@
 # GpuRouter
 
+[![Donate with Venmo](https://img.shields.io/badge/Donate-Venmo-008CFF?logo=venmo&logoColor=white)](https://venmo.com/u/TerryDuplantisJr)
+
 Keep your gaming GPU for games. GpuRouter automatically sends every app that is **not** a game to a second GPU in Windows: browsers, chat apps, launchers, RGB tools and video players.
 
 You pick three things:
