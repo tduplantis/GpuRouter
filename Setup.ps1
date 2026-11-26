@@ -61,8 +61,8 @@ function Stop-GRInstances {
     }
 }
 
-# Start the router through Explorer so it always runs un-elevated and detached from this window,
-# even when Setup itself was run as administrator.
+# Start the router un-elevated and detached from this window, even when Setup itself was run as
+# administrator (an elevated router is invisible to, and can't be stopped by, a normal Setup run).
 function Start-GRRouter([string]$launchArgs) {
     $lnkPath = Join-Path $GR_BinDir 'Start GpuRouter.lnk'
     $ws = New-Object -ComObject WScript.Shell
@@ -72,7 +72,22 @@ function Start-GRRouter([string]$launchArgs) {
     $lnk.WorkingDirectory = $GR_BinDir
     $lnk.WindowStyle = 7
     $lnk.Save()
-    Start-Process -FilePath "$env:WINDIR\explorer.exe" -ArgumentList "`"$lnkPath`""
+
+    $elevated = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    if (-not $elevated) {
+        Start-Process -FilePath $lnkPath
+    } else {
+        # one-shot task that runs as the signed-in user with a normal (limited) token
+        $task = 'GpuRouter one-time start'
+        $user = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+        $act  = New-ScheduledTaskAction -Execute "$env:WINDIR\System32\conhost.exe" -Argument $launchArgs -WorkingDirectory $GR_BinDir
+        $prin = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited
+        $set  = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero)
+        Register-ScheduledTask -TaskName $task -Action $act -Principal $prin -Settings $set -Force | Out-Null
+        Start-ScheduledTask -TaskName $task
+        Start-Sleep -Seconds 2
+        Unregister-ScheduledTask -TaskName $task -Confirm:$false   # the started process keeps running
+    }
     for ($i = 0; $i -lt 20 -and -not (Test-GRRunning); $i++) { Start-Sleep -Milliseconds 500 }
     Test-GRRunning
 }
