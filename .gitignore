@@ -1,0 +1,5 @@
+*.log
+*.log.old
+*.reg
+state.json
+config.json
