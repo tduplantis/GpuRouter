@@ -127,7 +127,9 @@ if ($Status) {
     $running = Get-GRRunningInstance
     $cfg = $null; try { $cfg = Get-GRConfig $ConfigPath } catch { }
     "GpuRouter $GR_Version"
-    "Running:         " + $(if ($running) { "yes (PID $(@($running.ProcessId) -join ', '))" } else { 'no' })
+    "Running:         " + $(if ($running) { "yes (PID $(@($running.ProcessId) -join ', '))" }
+                            elseif (Test-GRRunning) { 'yes, but started as administrator (sign out and back in, or run Setup as administrator once, to replace it)' }
+                            else { 'no' })
     "Starts at logon: " + $(if (Test-Path $GR_Shortcut) { 'yes' } else { 'no' })
     if ($cfg) {
         "Game GPU:        $($cfg.GameGpu.Name)"
@@ -144,9 +146,9 @@ if ($Status) {
 }
 
 # ---------------------------------------------------------------- main loop
-$mutex = New-Object Threading.Mutex($false, 'Local\GpuRouter')
 $haveMutex = $false
 if (-not $Once) {
+    $mutex = New-Object Threading.Mutex($false, $GR_MutexName)
     # a killed previous instance leaves the mutex abandoned; WaitOne then throws, but we do own it
     try { $haveMutex = $mutex.WaitOne(0) } catch [Threading.AbandonedMutexException] { $haveMutex = $true }
     if (-not $haveMutex) { Write-Host 'GpuRouter is already running.'; return }
@@ -178,6 +180,11 @@ try {
         if (-not $Once) { Start-Sleep -Seconds $cfg.PollSeconds }
     } while (-not $Once)
     if ($DryRun) { $script:DryRunLines | Sort-Object }
+}
+catch {
+    # startup failures (missing config, GPU not found) would otherwise vanish when running hidden
+    if (-not $Once) { Write-GRLog "STOPPED: $($_.Exception.Message)" }
+    throw
 }
 finally {
     if ($haveMutex) { $mutex.ReleaseMutex() }

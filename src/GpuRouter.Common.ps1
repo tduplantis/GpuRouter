@@ -160,7 +160,20 @@ function Test-GRUnderPath([string]$path, $prefixes) {
     $false
 }
 
+$GR_MutexName = 'Local\GpuRouter'
+
+# Router processes we can see. A copy started as administrator is invisible here (no access to its
+# command line), so use Test-GRRunning to know whether one is running at all.
 function Get-GRRunningInstance {
     Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" |
         Where-Object { $_.CommandLine -match 'GpuRouter\.ps1.*-Headless' -and $_.ProcessId -ne $PID }
+}
+
+# True while any router holds its single-instance mutex, elevated or not.
+function Test-GRRunning {
+    $m = $null
+    try {
+        if ([Threading.Mutex]::TryOpenExisting($GR_MutexName, [ref]$m)) { $m.Dispose(); return $true }
+    } catch [UnauthorizedAccessException] { return $true }   # exists, owned by an elevated copy
+    $false
 }

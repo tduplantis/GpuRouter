@@ -45,7 +45,36 @@ $DefaultExcludeExe = @(
 
 # ---------------------------------------------------------------- install / uninstall
 function Stop-GRInstances {
-    Get-GRRunningInstance | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+    Get-GRRunningInstance | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    for ($i = 0; $i -lt 10 -and (Test-GRRunning); $i++) { Start-Sleep -Milliseconds 300 }
+    if (Test-GRRunning) {
+        # only a copy started as administrator survives this, and a normal process can't stop it
+        $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+        if ($isAdmin) {
+            Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" | Where-Object { $_.CommandLine -match 'GpuRouter\.ps1.*-Headless' } |
+                ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+            Start-Sleep -Milliseconds 500
+        }
+        if (Test-GRRunning) {
+            throw 'An older GpuRouter started as administrator is still running and could not be stopped. Sign out and back in (or restart), then run Setup again.'
+        }
+    }
+}
+
+# Start the router through Explorer so it always runs un-elevated and detached from this window,
+# even when Setup itself was run as administrator.
+function Start-GRRouter([string]$launchArgs) {
+    $lnkPath = Join-Path $GR_BinDir 'Start GpuRouter.lnk'
+    $ws = New-Object -ComObject WScript.Shell
+    $lnk = $ws.CreateShortcut($lnkPath)
+    $lnk.TargetPath = "$env:WINDIR\System32\conhost.exe"
+    $lnk.Arguments = $launchArgs
+    $lnk.WorkingDirectory = $GR_BinDir
+    $lnk.WindowStyle = 7
+    $lnk.Save()
+    Start-Process -FilePath "$env:WINDIR\explorer.exe" -ArgumentList "`"$lnkPath`""
+    for ($i = 0; $i -lt 20 -and -not (Test-GRRunning); $i++) { Start-Sleep -Milliseconds 500 }
+    Test-GRRunning
 }
 
 function Install-GpuRouter {
@@ -62,8 +91,14 @@ function Install-GpuRouter {
 
     # 1. files
     New-Item -ItemType Directory -Force -Path $GR_BinDir | Out-Null
-    foreach ($f in 'GpuRouter.ps1', 'GpuRouter.Common.ps1') { Copy-Item (Join-Path $SrcDir $f) (Join-Path $GR_BinDir $f) -Force }
-    Copy-Item $PSCommandPath (Join-Path $GR_BinDir 'Setup.ps1') -Force
+    # skip the copy when Setup is run from the installed copy: Copy-Item refuses to copy a file onto itself
+    $same = { param($a, $b) [IO.Path]::GetFullPath($a).TrimEnd('\') -ieq [IO.Path]::GetFullPath($b).TrimEnd('\') }
+    foreach ($f in 'GpuRouter.ps1', 'GpuRouter.Common.ps1') {
+        $src = Join-Path $SrcDir $f; $dst = Join-Path $GR_BinDir $f
+        if (-not (& $same $src $dst)) { Copy-Item $src $dst -Force }
+    }
+    $dstSetup = Join-Path $GR_BinDir 'Setup.ps1'
+    if (-not (& $same $PSCommandPath $dstSetup)) { Copy-Item $PSCommandPath $dstSetup -Force }
     Get-ChildItem $GR_BinDir | Unblock-File
     $out.Add("Installed to $GR_BinDir")
 
@@ -133,8 +168,8 @@ function Install-GpuRouter {
     }
 
     # 5. start now
-    Start-Process -FilePath "$env:WINDIR\System32\conhost.exe" -ArgumentList $launch -WindowStyle Hidden
-    $out.Add('GpuRouter is running')
+    if (Start-GRRouter $launch) { $out.Add('GpuRouter is running') }
+    else { $out.Add("GpuRouter did not start. Check $GR_LogPath") }
     $out
 }
 
